@@ -70,7 +70,7 @@ const firstDay=(m,y)=>(new Date(y,m,1).getDay()+6)%7;
 const todayKey=()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const dateKey=(y,m,d)=>`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
-// ===== SMALL COMPONENTS =====
+// ===== COMPONENTS =====
 function StatBar({label,value,max,color,icon}){
   return(<div style={{marginBottom:11}}>
     <div style={{display:"flex",justifyContent:"space-between",marginBottom:3,fontSize:12,letterSpacing:1}}><span>{icon} {label}</span><span style={{color}}>{value}</span></div>
@@ -117,16 +117,20 @@ export default function App(){
   const[newMile,setNewMile]=useState("");
   // Habits
   const[habits,setHabits]=useState(DEF_HABITS);
-  const[habitLog,setHabitLog]=useState({});
+  const[habitLog,setHabitLog]=useState({}); // keys: "habitId_dateKey" => true
   const[newHName,setNewHName]=useState("");const[newHStat,setNewHStat]=useState("consistency");const[newHPts,setNewHPts]=useState(10);
-  const[hMonth,setHMonth]=useState(new Date().getMonth());
+  const[editingHabits,setEditingHabits]=useState(false);
+  // Shared month nav for habits + calendar
+  const[viewMonth,setViewMonth]=useState(new Date().getMonth());
   // Calendar
-  const[calMonth,setCalMonth]=useState(new Date().getMonth());
   const[calTasks,setCalTasks]=useState({});
   const[editDay,setEditDay]=useState(null);const[dayInput,setDayInput]=useState("");
-  const[calObj,setCalObj]=useState("");const[calNotes,setCalNotes]=useState("");
+  const[calObjMap,setCalObjMap]=useState({}); // FIX: per-month objectives
+  const[calNotesMap,setCalNotesMap]=useState({}); // FIX: per-month notes
   // War Map
   const[qGoals,setQGoals]=useState(DEF_Q_GOALS);
+  const[editingMap,setEditingMap]=useState(false);
+  const[newGoalQ,setNewGoalQ]=useState(0);const[newGoalText,setNewGoalText]=useState("");
 
   const calYear=2026;
   const prev=useRef(getLevel(pts));
@@ -149,17 +153,35 @@ export default function App(){
   function completeRand(){if(randC.done)return;addPts(randC.points,randC.stat,"🎲 "+randC.name);setRandC(p=>({...p,done:true}));}
   function addChallenge(){if(!ncName.trim())return;(ncType==="daily"?setDaily:setWeekly)(p=>[...p,{id:`c_${Date.now()}`,name:ncName,points:ncPts,stat:ncStat,done:false}]);setNcName("");}
   function removeC(type,id){(type==="daily"?setDaily:setWeekly)(p=>p.filter(c=>c.id!==id));}
-  // Habits
+
+  // FIX: Habits — only give XP on check, not on un-check. No XP deduction.
   function toggleHabit(hId,dk){
     const key=`${hId}_${dk}`;
-    if(!habitLog[key]){const h=habits.find(x=>x.id===hId);if(h)addPts(h.points,h.stat,`✅ ${h.name}`);}
-    setHabitLog(p=>({...p,[key]:!p[key]}));
+    const wasChecked=!!habitLog[key];
+    if(!wasChecked){const h=habits.find(x=>x.id===hId);if(h)addPts(h.points,h.stat,`✅ ${h.name}`);}
+    setHabitLog(p=>{const n={...p};if(wasChecked){delete n[key];}else{n[key]=true;}return n;});
   }
   function getHDone(hId,dk){return!!habitLog[`${hId}_${dk}`];}
   function getHPct(hId,m,y){const d=daysInMonth(m,y);let c=0;for(let i=1;i<=d;i++)if(habitLog[`${hId}_${dateKey(y,m,i)}`])c++;return Math.round((c/d)*100);}
   function getDayHabitPct(dk){if(!habits.length)return 0;let c=0;habits.forEach(h=>{if(habitLog[`${h.id}_${dk}`])c++;});return Math.round((c/habits.length)*100);}
+  // FIX: Streak calculator
+  function getStreak(hId){
+    let streak=0;const d=new Date();
+    for(let i=0;i<365;i++){
+      const check=new Date(d);check.setDate(check.getDate()-i);
+      const dk=dateKey(check.getFullYear(),check.getMonth(),check.getDate());
+      if(habitLog[`${hId}_${dk}`])streak++;else break;
+    }
+    return streak;
+  }
+
   // Calendar
-  function addCalTask(dk){if(!dayInput.trim())return;setCalTasks(p=>({...p,[dk]:[...(p[dk]||[]),dayInput]}));setDayInput("");setEditDay(null);}
+  function addCalTask(dk){if(!dayInput.trim())return;setCalTasks(p=>({...p,[dk]:[...(p[dk]||[]),dayInput]}));setDayInput("");}
+  // FIX: Delete calendar task
+  function removeCalTask(dk,idx){setCalTasks(p=>({...p,[dk]:(p[dk]||[]).filter((_,i)=>i!==idx)}));}
+
+  // Today's XP
+  const todayXP=log.filter(l=>l.date===new Date().toLocaleDateString()).reduce((a,l)=>a+l.points,0);
 
   const iS={background:"rgba(0,0,0,0.3)",border:"1px solid rgba(255,255,255,0.1)",color:"#e0e0e0",padding:"9px 12px",borderRadius:7,fontFamily:"'Chakra Petch',sans-serif",fontSize:13};
   const cS={background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:14,padding:22,marginBottom:18};
@@ -191,7 +213,7 @@ export default function App(){
   return(
     <div style={{minHeight:"100vh",background:"#0a0a0f",color:"#e0e0e0",fontFamily:"'Chakra Petch',sans-serif"}}>
       <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700&family=Chakra+Petch:wght@300;400;600;700&display=swap" rel="stylesheet"/>
-      <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}input:focus,select:focus{outline:none;border-color:#ffaa00!important}::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}`}</style>
+      <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}input:focus,select:focus,textarea:focus{outline:none;border-color:#ffaa00!important}::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#333;border-radius:3px}`}</style>
       {lvlUp&&<LevelUp level={lvlUp} onClose={()=>setLvlUp(null)}/>}
       {punishment&&<div style={{position:"fixed",inset:0,zIndex:9998,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setPunishment(null)}>
         <div style={{textAlign:"center",padding:40}}><div style={{fontSize:60,marginBottom:16}}>💀</div><div style={{fontFamily:"'Cinzel Decorative',serif",fontSize:26,color:"#ff4444",marginBottom:10}}>PUNISHMENT</div><div style={{fontSize:18,color:"#ffaa00",marginBottom:16}}>{punishment}</div><div style={{color:"#666",fontSize:12}}>Too many missed. Click to dismiss.</div></div>
@@ -222,9 +244,9 @@ export default function App(){
             <div style={{height:11,background:"rgba(255,255,255,0.06)",borderRadius:5,overflow:"hidden"}}><div style={{width:`${progress}%`,height:"100%",background:"linear-gradient(90deg,#ff4444,#ffaa00,#cc88ff)",backgroundSize:"200% 100%",animation:"shimmer 3s linear infinite",borderRadius:5,transition:"width 1s"}}/></div>
             <div style={{textAlign:"center",fontSize:12,color:"#ffaa00",marginTop:5}}>{pts} / {LVL[level]||"MAX"} XP</div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-            {[{v:days,l:"DAYS",c:"#ffaa00"},{v:log.length,l:"ACTIONS",c:"#66ffaa"},{v:titles.length,l:"TITLES",c:"#cc88ff"}].map(x=>
-              <div key={x.l} style={{textAlign:"center",padding:10,background:"rgba(0,0,0,0.2)",borderRadius:9}}><div style={{fontSize:18,fontWeight:700,color:x.c}}>{x.v}</div><div style={{fontSize:9,color:"#888",letterSpacing:1}}>{x.l}</div></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10}}>
+            {[{v:days,l:"DAYS",c:"#ffaa00"},{v:todayXP,l:"TODAY XP",c:"#66ffaa"},{v:log.length,l:"ACTIONS",c:"#44aaff"},{v:titles.length,l:"TITLES",c:"#cc88ff"}].map(x=>
+              <div key={x.l} style={{textAlign:"center",padding:10,background:"rgba(0,0,0,0.2)",borderRadius:9}}><div style={{fontSize:18,fontWeight:700,color:x.c}}>{x.v}</div><div style={{fontSize:8,color:"#888",letterSpacing:1}}>{x.l}</div></div>
             )}
           </div>
         </div>
@@ -233,11 +255,8 @@ export default function App(){
           <div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:20}}>🎲</span><div><div style={{fontSize:10,color:"#ffaa00",letterSpacing:1}}>TODAY'S CHALLENGE</div><div style={{fontSize:13,color:randC.done?"#666":"#e0e0e0",textDecoration:randC.done?"line-through":"none"}}>{randC.name}</div></div></div>
           {randC.done?<span style={{color:"#66ffaa",fontSize:11}}>✓ DONE</span>:<span style={{color:"#ffaa00",fontSize:11}}>+50 XP →</span>}
         </div>
-        {/* Stats */}
         <div style={cS}>{sT("⚡ STATS")}{Object.entries(STATS).map(([k,{icon,color}])=><StatBar key={k} label={k.replace(/_/g," ").toUpperCase()} value={stats[k]} max={Math.max(50,stats[k]+10)} color={color} icon={icon}/>)}</div>
-        {/* Glory */}
         <div style={cS}>{sT("👑 GLORY TITLES")}{TITLES.map(t=>{const e=titles.includes(t.name);return<div key={t.name} style={{display:"flex",justifyContent:"space-between",padding:"9px 12px",marginBottom:5,background:e?"rgba(255,170,0,0.08)":"rgba(255,255,255,0.02)",borderRadius:7,border:e?"1px solid rgba(255,170,0,0.2)":"1px solid transparent"}}><span style={{color:e?"#ffaa00":"#444",fontWeight:600}}>{e?"👑":"🔒"} {t.name} <span style={{color:"#666",fontSize:11,fontWeight:400}}>Lv.{t.level}</span></span>{e&&<span style={{color:"#66ffaa",fontSize:11}}>EARNED</span>}</div>;})}</div>
-        {/* Quick add */}
         <div style={cS}>{sT("⚡ QUICK ADD TASK")}
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             <input value={cName} onChange={e=>setCName(e.target.value)} placeholder="Task..." onKeyDown={e=>e.key==="Enter"&&addCustom()} style={{...iS,flex:2,minWidth:120}}/>
@@ -250,7 +269,6 @@ export default function App(){
 
       {/* ========== CHALLENGES ========== */}
       {tab==="challenges"&&<div style={{animation:"fadeIn 0.4s"}}>
-        {/* Random */}
         <div style={{background:"linear-gradient(135deg,rgba(255,170,0,0.1),rgba(204,136,255,0.1))",border:"1px solid rgba(255,170,0,0.25)",borderRadius:14,padding:22,marginBottom:18,position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",top:-20,right:-20,fontSize:80,opacity:0.06,transform:"rotate(15deg)",pointerEvents:"none"}}>🎲</div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><div style={{fontSize:11,color:"#ffaa00",letterSpacing:2,fontWeight:700}}>🎲 TODAY'S RANDOM CHALLENGE</div><div style={{background:"rgba(255,170,0,0.2)",color:"#ffaa00",padding:"3px 10px",borderRadius:20,fontSize:10}}>+50 BONUS XP</div></div>
@@ -277,7 +295,7 @@ export default function App(){
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>{sT("🗓️ WEEKLY CHALLENGES")}<div style={{background:doneW===weekly.length?"rgba(102,255,170,0.15)":"rgba(204,136,255,0.15)",color:doneW===weekly.length?"#66ffaa":"#cc88ff",padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:600}}>{doneW}/{weekly.length}</div></div>
           {weekly.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 14px",marginBottom:5,background:c.done?"rgba(102,255,170,0.06)":"rgba(0,0,0,0.2)",borderRadius:9,cursor:c.done?"default":"pointer"}} onClick={()=>!c.done&&toggleC("weekly",c.id)}>
             <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:20,height:20,borderRadius:5,border:c.done?"2px solid #66ffaa":"2px solid #444",background:c.done?"#66ffaa":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#0a0a0f"}}>{c.done?"✓":""}</div><span style={{textDecoration:c.done?"line-through":"none",color:c.done?"#666":"#e0e0e0",fontSize:13}}>{c.name}</span></div>
-            <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:STATS[c.stat]?.color}}>{STATS[c.stat]?.icon}</span><span style={{color:"#cc88ff",fontSize:12,fontWeight:600}}>+{c.points}</span></div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:STATS[c.stat]?.color}}>{STATS[c.stat]?.icon}</span><span style={{color:"#cc88ff",fontSize:12,fontWeight:600}}>+{c.points}</span>{editing&&<button onClick={e=>{e.stopPropagation();removeC("weekly",c.id)}} style={{background:"none",border:"none",color:"#ff4444",cursor:"pointer",fontSize:15}}>×</button>}</div>
           </div>)}
           <Btn color="#888" onClick={()=>setWeekly(p=>p.map(c=>({...c,done:false})))} style={{marginTop:12}}>🔄 Reset Weekly</Btn>
         </div>
@@ -298,53 +316,53 @@ export default function App(){
       {tab==="warmap"&&<div style={{animation:"fadeIn 0.4s"}}>
         <div style={{...cS,padding:20}}>
           <div style={{fontFamily:"'Cinzel Decorative',serif",fontSize:18,textAlign:"center",marginBottom:4,background:"linear-gradient(135deg,#ffaa00,#ff4444)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{calYear} Dashboard (Macro Scope)</div>
-          <div style={{textAlign:"center",fontSize:10,color:"#666",marginBottom:18}}>Quarterly goals + full year calendar</div>
-
-          {/* Key */}
-          <div style={{display:"flex",gap:12,justifyContent:"center",marginBottom:18,fontSize:10,color:"#888"}}>
+          <div style={{textAlign:"center",fontSize:10,color:"#666",marginBottom:18}}>Quarterly goals + full year calendar • Colors = habit completion</div>
+          <div style={{display:"flex",gap:12,justifyContent:"center",marginBottom:18,fontSize:10,color:"#888",flexWrap:"wrap"}}>
             <span><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"#66ffaa",marginRight:4,verticalAlign:"middle"}}/>80%+</span>
             <span><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"#ffaa00",marginRight:4,verticalAlign:"middle"}}/>50-79%</span>
             <span><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"#ff4444",marginRight:4,verticalAlign:"middle"}}/>1-49%</span>
             <span><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"rgba(255,255,255,0.06)",marginRight:4,verticalAlign:"middle"}}/>0%</span>
           </div>
-
           {[0,1,2,3].map(qi=>{
             const qMonths=[qi*3,qi*3+1,qi*3+2];
             const qColors=["#ff4444","#ffaa00","#44aaff","#cc88ff"];
-            return(
-              <div key={qi} style={{marginBottom:20}}>
-                {/* Quarter header */}
-                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
-                  <div style={{background:`${qColors[qi]}22`,border:`1px solid ${qColors[qi]}44`,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:700,color:qColors[qi]}}>Q{qi+1}</div>
-                  <div style={{flex:1,height:1,background:"rgba(255,255,255,0.06)"}}/>
-                </div>
-                {/* Goals */}
-                {qGoals[qi]?.goals.map((g,gi)=><div key={gi} style={{fontSize:11,color:"#aaa",paddingLeft:16,marginBottom:3}}>◆ {g}</div>)}
-                {/* 3 months grid */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:10}}>
-                  {qMonths.map(mi=>{
-                    const dim=daysInMonth(mi,calYear);
-                    const fd=firstDay(mi,calYear);
-                    return(
-                      <div key={mi}>
-                        <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#888",marginBottom:4}}>{MONTHS[mi]}</div>
-                        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:1}}>
-                          {Array.from({length:fd},(_,i)=><div key={`e${i}`} style={{aspectRatio:"1"}}/>)}
-                          {Array.from({length:dim},(_,i)=>{
-                            const dk=dateKey(calYear,mi,i+1);
-                            const pct=getDayHabitPct(dk);
-                            const bg=pct>=80?"#66ffaa":pct>=50?"#ffaa00":pct>0?"#ff4444":"rgba(255,255,255,0.06)";
-                            const isT=dk===today;
-                            return<div key={i} style={{aspectRatio:"1",background:bg,borderRadius:2,border:isT?"1.5px solid #fff":"1px solid rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:6,color:pct>0?"#000":"#444",fontWeight:isT?700:400,minWidth:0}} title={`${MONTHS[mi]} ${i+1}: ${pct}%`}>{i+1}</div>;
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+            return(<div key={qi} style={{marginBottom:20}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+                <div style={{background:`${qColors[qi]}22`,border:`1px solid ${qColors[qi]}44`,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:700,color:qColors[qi]}}>Q{qi+1}</div>
+                <div style={{flex:1,height:1,background:"rgba(255,255,255,0.06)"}}/>
               </div>
-            );
+              {qGoals[qi]?.goals.map((g,gi)=><div key={gi} style={{fontSize:11,color:"#aaa",paddingLeft:16,marginBottom:3,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span>◆ {g}</span>
+                {editingMap&&<button onClick={()=>setQGoals(p=>p.map((q,i)=>i===qi?{...q,goals:q.goals.filter((_,j)=>j!==gi)}:q))} style={{background:"none",border:"none",color:"#ff4444",cursor:"pointer",fontSize:14}}>×</button>}
+              </div>)}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:10}}>
+                {qMonths.map(mi=>{
+                  const dim=daysInMonth(mi,calYear);const fd=firstDay(mi,calYear);
+                  return(<div key={mi}>
+                    <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#888",marginBottom:4}}>{MONTHS[mi]}</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:1}}>
+                      {Array.from({length:fd},(_,i)=><div key={`e${i}`} style={{aspectRatio:"1"}}/>)}
+                      {Array.from({length:dim},(_,i)=>{
+                        const dk=dateKey(calYear,mi,i+1);const pct=getDayHabitPct(dk);
+                        const bg=pct>=80?"#66ffaa":pct>=50?"#ffaa00":pct>0?"#ff4444":"rgba(255,255,255,0.06)";
+                        const isT=dk===today;
+                        return<div key={i} style={{aspectRatio:"1",background:bg,borderRadius:2,border:isT?"1.5px solid #fff":"1px solid rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:6,color:pct>0?"#000":"#444",fontWeight:isT?700:400,minWidth:0}} title={`${MONTHS[mi]} ${i+1}: ${pct}%`}>{i+1}</div>;
+                      })}
+                    </div>
+                  </div>);
+                })}
+              </div>
+            </div>);
           })}
+          {/* Edit goals */}
+          <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+            <Btn color="#888" onClick={()=>setEditingMap(!editingMap)}>{editingMap?"Done editing":"✏️ Edit goals"}</Btn>
+            {editingMap&&<>
+              <select value={newGoalQ} onChange={e=>setNewGoalQ(parseInt(e.target.value))} style={{...iS,width:65}}>{[0,1,2,3].map(i=><option key={i} value={i}>Q{i+1}</option>)}</select>
+              <input value={newGoalText} onChange={e=>setNewGoalText(e.target.value)} placeholder="New goal..." onKeyDown={e=>{if(e.key==="Enter"&&newGoalText.trim()){setQGoals(p=>p.map((q,i)=>i===newGoalQ?{...q,goals:[...q.goals,newGoalText]}:q));setNewGoalText("");}}} style={{...iS,flex:1,minWidth:120}}/>
+              <Btn color="#66ffaa" onClick={()=>{if(newGoalText.trim()){setQGoals(p=>p.map((q,i)=>i===newGoalQ?{...q,goals:[...q.goals,newGoalText]}:q));setNewGoalText("");}}}>+</Btn>
+            </>}
+          </div>
         </div>
       </div>}
 
@@ -352,39 +370,39 @@ export default function App(){
       {tab==="calendar"&&<div style={{animation:"fadeIn 0.4s"}}>
         <div style={cS}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-            <div style={{fontFamily:"'Cinzel Decorative',serif",fontSize:18,color:"#ffaa00"}}>{MONTHS_FULL[calMonth]}</div>
-            <div style={{display:"flex",gap:6}}><Btn color="#888" onClick={()=>setCalMonth(p=>p>0?p-1:11)}>◀</Btn><Btn color="#888" onClick={()=>setCalMonth(p=>p<11?p+1:0)}>▶</Btn></div>
+            <div style={{fontFamily:"'Cinzel Decorative',serif",fontSize:18,color:"#ffaa00"}}>{MONTHS_FULL[viewMonth]}</div>
+            <div style={{display:"flex",gap:6}}><Btn color="#888" onClick={()=>setViewMonth(p=>p>0?p-1:11)}>◀</Btn><Btn color="#888" onClick={()=>setViewMonth(p=>p<11?p+1:0)}>▶</Btn></div>
           </div>
-          {/* Day headers */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:6}}>
             {DAYS_H.map(d=><div key={d} style={{textAlign:"center",fontSize:10,color:"#888",padding:"6px 0",background:"rgba(255,255,255,0.04)",borderRadius:4,fontWeight:700}}>{d}</div>)}
           </div>
-          {/* Grid */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
-            {Array.from({length:firstDay(calMonth,calYear)},(_,i)=><div key={`e${i}`}/>)}
-            {Array.from({length:daysInMonth(calMonth,calYear)},(_,i)=>{
-              const d=i+1, dk=dateKey(calYear,calMonth,d);
-              const tasks=calTasks[dk]||[];
-              const isT=dk===today;
+            {Array.from({length:firstDay(viewMonth,calYear)},(_,i)=><div key={`e${i}`}/>)}
+            {Array.from({length:daysInMonth(viewMonth,calYear)},(_,i)=>{
+              const d=i+1,dk=dateKey(calYear,viewMonth,d);const tasks=calTasks[dk]||[];const isT=dk===today;
               return<div key={d} style={{padding:6,background:isT?"rgba(255,170,0,0.1)":"rgba(0,0,0,0.2)",borderRadius:8,border:isT?"1px solid rgba(255,170,0,0.3)":"1px solid rgba(255,255,255,0.04)",minHeight:70,cursor:"pointer"}} onClick={()=>{setEditDay(dk);setDayInput("");}}>
                 <div style={{fontSize:12,fontWeight:700,color:isT?"#ffaa00":"#888",marginBottom:3}}>{d}</div>
                 {tasks.map((t,ti)=><div key={ti} style={{fontSize:9,color:"#aaa",padding:"1px 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>• {t}</div>)}
               </div>;
             })}
           </div>
-          {/* Day editor */}
           {editDay&&<div style={{marginTop:14,padding:14,background:"rgba(0,0,0,0.3)",borderRadius:10,border:"1px solid rgba(255,170,0,0.2)"}}>
-            <div style={{fontSize:11,color:"#ffaa00",marginBottom:8}}>📝 Add task for {editDay}</div>
-            <div style={{display:"flex",gap:6}}>
-              <input value={dayInput} onChange={e=>setDayInput(e.target.value)} placeholder="Task..." onKeyDown={e=>e.key==="Enter"&&addCalTask(editDay)} style={{...iS,flex:1}}/>
-              <Btn color="#66ffaa" onClick={()=>addCalTask(editDay)}>+</Btn><Btn color="#888" onClick={()=>setEditDay(null)}>✕</Btn>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:11,color:"#ffaa00"}}>📝 Tasks for {editDay}</span>
+              <button onClick={()=>setEditDay(null)} style={{background:"none",border:"none",color:"#888",cursor:"pointer",fontSize:14}}>✕</button>
             </div>
-            {(calTasks[editDay]||[]).map((t,i)=><div key={i} style={{fontSize:11,color:"#aaa",marginTop:4,paddingLeft:8}}>• {t}</div>)}
+            {(calTasks[editDay]||[]).map((t,i)=><div key={i} style={{fontSize:11,color:"#aaa",padding:"3px 8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span>• {t}</span>
+              <button onClick={()=>removeCalTask(editDay,i)} style={{background:"none",border:"none",color:"#ff4444",cursor:"pointer",fontSize:12}}>×</button>
+            </div>)}
+            <div style={{display:"flex",gap:6,marginTop:6}}>
+              <input value={dayInput} onChange={e=>setDayInput(e.target.value)} placeholder="Add task..." onKeyDown={e=>e.key==="Enter"&&addCalTask(editDay)} style={{...iS,flex:1}}/>
+              <Btn color="#66ffaa" onClick={()=>addCalTask(editDay)}>+</Btn>
+            </div>
           </div>}
-          {/* Main Objectives / Notes */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:16}}>
-            <div><div style={{fontSize:10,color:"#888",letterSpacing:1,marginBottom:6,fontWeight:700}}>MAIN OBJECTIVES</div><textarea value={calObj} onChange={e=>setCalObj(e.target.value)} placeholder="This month's objectives..." style={{...iS,width:"100%",minHeight:70,resize:"vertical",boxSizing:"border-box"}}/></div>
-            <div><div style={{fontSize:10,color:"#888",letterSpacing:1,marginBottom:6,fontWeight:700}}>NOTES</div><textarea value={calNotes} onChange={e=>setCalNotes(e.target.value)} placeholder="Notes..." style={{...iS,width:"100%",minHeight:70,resize:"vertical",boxSizing:"border-box"}}/></div>
+            <div><div style={{fontSize:10,color:"#888",letterSpacing:1,marginBottom:6,fontWeight:700}}>MAIN OBJECTIVES</div><textarea value={calObjMap[viewMonth]||""} onChange={e=>setCalObjMap(p=>({...p,[viewMonth]:e.target.value}))} placeholder="This month's objectives..." style={{...iS,width:"100%",minHeight:70,resize:"vertical",boxSizing:"border-box"}}/></div>
+            <div><div style={{fontSize:10,color:"#888",letterSpacing:1,marginBottom:6,fontWeight:700}}>NOTES</div><textarea value={calNotesMap[viewMonth]||""} onChange={e=>setCalNotesMap(p=>({...p,[viewMonth]:e.target.value}))} placeholder="Notes..." style={{...iS,width:"100%",minHeight:70,resize:"vertical",boxSizing:"border-box"}}/></div>
           </div>
         </div>
       </div>}
@@ -393,63 +411,65 @@ export default function App(){
       {tab==="habits"&&<div style={{animation:"fadeIn 0.4s"}}>
         <div style={cS}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-            {sT(`📊 HABIT TRACKER — ${MONTHS_FULL[hMonth]} ${calYear}`)}
-            <div style={{display:"flex",gap:6}}><Btn color="#888" onClick={()=>setHMonth(p=>p>0?p-1:11)}>◀</Btn><Btn color="#888" onClick={()=>setHMonth(p=>p<11?p+1:0)}>▶</Btn></div>
+            {sT(`📊 HABIT TRACKER — ${MONTHS_FULL[viewMonth]} ${calYear}`)}
+            <div style={{display:"flex",gap:6}}><Btn color="#888" onClick={()=>setViewMonth(p=>p>0?p-1:11)}>◀</Btn><Btn color="#888" onClick={()=>setViewMonth(p=>p<11?p+1:0)}>▶</Btn></div>
           </div>
           <div style={{overflowX:"auto"}}>
-            {/* Header row */}
-            <div style={{display:"grid",gridTemplateColumns:`130px repeat(${daysInMonth(hMonth,calYear)},1fr) 50px 50px`,gap:2,minWidth:600}}>
+            <div style={{display:"grid",gridTemplateColumns:`130px repeat(${daysInMonth(viewMonth,calYear)},1fr) 45px 40px 45px`,gap:2,minWidth:650}}>
               <div style={{padding:4,fontSize:10,color:"#888",fontWeight:700}}>HABITS</div>
-              {Array.from({length:daysInMonth(hMonth,calYear)},(_,i)=><div key={i} style={{textAlign:"center",fontSize:8,color:"#666",padding:2}}>{i+1}</div>)}
-              <div style={{textAlign:"center",fontSize:9,color:"#888",fontWeight:700}}>DONE</div>
-              <div style={{textAlign:"center",fontSize:9,color:"#888",fontWeight:700}}>%</div>
+              {Array.from({length:daysInMonth(viewMonth,calYear)},(_,i)=>{
+                const dk=dateKey(calYear,viewMonth,i+1);const isT=dk===today;
+                return<div key={i} style={{textAlign:"center",fontSize:8,color:isT?"#ffaa00":"#666",fontWeight:isT?700:400,padding:2,background:isT?"rgba(255,170,0,0.15)":"transparent",borderRadius:2}}>{i+1}</div>;
+              })}
+              <div style={{textAlign:"center",fontSize:8,color:"#888",fontWeight:700}}>DONE</div>
+              <div style={{textAlign:"center",fontSize:8,color:"#888",fontWeight:700}}>%</div>
+              <div style={{textAlign:"center",fontSize:8,color:"#888",fontWeight:700}}>🔥</div>
             </div>
-            {/* Habit rows */}
             {habits.map(h=>{
-              const pct=getHPct(h.id,hMonth,calYear);
-              const dim=daysInMonth(hMonth,calYear);
-              let cnt=0;for(let i=1;i<=dim;i++)if(habitLog[`${h.id}_${dateKey(calYear,hMonth,i)}`])cnt++;
-              return(
-                <div key={h.id} style={{display:"grid",gridTemplateColumns:`130px repeat(${dim},1fr) 50px 50px`,gap:2,alignItems:"center",minWidth:600}}>
-                  <div style={{padding:4,fontSize:11,color:"#e0e0e0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.name}</div>
-                  {Array.from({length:dim},(_,i)=>{
-                    const dk=dateKey(calYear,hMonth,i+1);
-                    const done=getHDone(h.id,dk);
-                    return<div key={i} onClick={()=>toggleHabit(h.id,dk)} style={{aspectRatio:"1",borderRadius:3,background:done?"#66ffaa":"rgba(255,255,255,0.04)",border:done?"1px solid #66ffaa44":"1px solid rgba(255,255,255,0.06)",cursor:"pointer",transition:"all 0.15s",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:done?"#0a0a0f":"transparent",minWidth:12}}>✓</div>;
-                  })}
-                  <div style={{textAlign:"center",fontSize:12,color:"#ffaa00",fontWeight:600}}>{cnt}</div>
-                  <div style={{textAlign:"center",fontSize:11,color:pct>=80?"#66ffaa":pct>=50?"#ffaa00":"#ff4444",fontWeight:600}}>{pct}%</div>
+              const pct=getHPct(h.id,viewMonth,calYear);
+              const dim=daysInMonth(viewMonth,calYear);
+              let cnt=0;for(let i=1;i<=dim;i++)if(habitLog[`${h.id}_${dateKey(calYear,viewMonth,i)}`])cnt++;
+              const streak=getStreak(h.id);
+              return(<div key={h.id} style={{display:"grid",gridTemplateColumns:`130px repeat(${dim},1fr) 45px 40px 45px`,gap:2,alignItems:"center",minWidth:650}}>
+                <div style={{padding:4,fontSize:11,color:"#e0e0e0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
+                  {editingHabits&&<button onClick={()=>setHabits(p=>p.filter(x=>x.id!==h.id))} style={{background:"none",border:"none",color:"#ff4444",cursor:"pointer",fontSize:12,padding:0}}>×</button>}
+                  {h.name}
                 </div>
-              );
+                {Array.from({length:dim},(_,i)=>{
+                  const dk=dateKey(calYear,viewMonth,i+1);const done=getHDone(h.id,dk);const isT=dk===today;
+                  return<div key={i} onClick={()=>toggleHabit(h.id,dk)} style={{aspectRatio:"1",borderRadius:3,background:done?"#66ffaa":"rgba(255,255,255,0.04)",border:isT?"1.5px solid #ffaa00":done?"1px solid #66ffaa44":"1px solid rgba(255,255,255,0.06)",cursor:"pointer",transition:"all 0.15s",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:done?"#0a0a0f":"transparent",minWidth:12}}>✓</div>;
+                })}
+                <div style={{textAlign:"center",fontSize:12,color:"#ffaa00",fontWeight:600}}>{cnt}</div>
+                <div style={{textAlign:"center",fontSize:11,color:pct>=80?"#66ffaa":pct>=50?"#ffaa00":"#ff4444",fontWeight:600}}>{pct}%</div>
+                <div style={{textAlign:"center",fontSize:11,color:streak>0?"#ff6644":"#444",fontWeight:600}}>{streak>0?`${streak}d`:"-"}</div>
+              </div>);
             })}
             {/* Progress row */}
-            <div style={{display:"grid",gridTemplateColumns:`130px repeat(${daysInMonth(hMonth,calYear)},1fr) 50px 50px`,gap:2,alignItems:"center",marginTop:6,minWidth:600}}>
+            <div style={{display:"grid",gridTemplateColumns:`130px repeat(${daysInMonth(viewMonth,calYear)},1fr) 45px 40px 45px`,gap:2,alignItems:"center",marginTop:6,minWidth:650}}>
               <div style={{padding:4,fontSize:10,color:"#888",fontWeight:700}}>PROGRESS</div>
-              {Array.from({length:daysInMonth(hMonth,calYear)},(_,i)=>{
-                const dk=dateKey(calYear,hMonth,i+1);
-                const pct=getDayHabitPct(dk);
-                return<div key={i} style={{textAlign:"center",fontSize:12}}>{pct>=80?"🟢":pct>=50?"🟡":pct>0?"🔴":"⚫"}</div>;
+              {Array.from({length:daysInMonth(viewMonth,calYear)},(_,i)=>{
+                const dk=dateKey(calYear,viewMonth,i+1);const pct=getDayHabitPct(dk);
+                return<div key={i} style={{textAlign:"center",fontSize:11}}>{pct>=80?"🟢":pct>=50?"🟡":pct>0?"🔴":"⚫"}</div>;
               })}
-              <div/><div/>
+              <div/><div/><div/>
             </div>
-            {/* % row */}
-            <div style={{display:"grid",gridTemplateColumns:`130px repeat(${daysInMonth(hMonth,calYear)},1fr) 50px 50px`,gap:2,alignItems:"center",minWidth:600}}>
+            <div style={{display:"grid",gridTemplateColumns:`130px repeat(${daysInMonth(viewMonth,calYear)},1fr) 45px 40px 45px`,gap:2,alignItems:"center",minWidth:650}}>
               <div style={{padding:4,fontSize:10,color:"#888"}}>%</div>
-              {Array.from({length:daysInMonth(hMonth,calYear)},(_,i)=>{
-                const dk=dateKey(calYear,hMonth,i+1);
+              {Array.from({length:daysInMonth(viewMonth,calYear)},(_,i)=>{
+                const dk=dateKey(calYear,viewMonth,i+1);
                 return<div key={i} style={{textAlign:"center",fontSize:7,color:"#666"}}>{getDayHabitPct(dk)}%</div>;
               })}
-              <div/><div/>
+              <div/><div/><div/>
             </div>
           </div>
-          {/* Add habit */}
           <div style={{display:"flex",gap:6,marginTop:16,flexWrap:"wrap"}}>
-            <input value={newHName} onChange={e=>setNewHName(e.target.value)} placeholder="New habit..." style={{...iS,flex:2,minWidth:120}}/>
+            <input value={newHName} onChange={e=>setNewHName(e.target.value)} placeholder="New habit..." onKeyDown={e=>{if(e.key==="Enter"&&newHName.trim()){setHabits(p=>[...p,{id:`h_${Date.now()}`,name:newHName,stat:newHStat,points:newHPts}]);setNewHName("");}}} style={{...iS,flex:2,minWidth:120}}/>
             <select value={newHStat} onChange={e=>setNewHStat(e.target.value)} style={{...iS,flex:1,minWidth:80}}>{Object.entries(STATS).map(([k,v])=><option key={k} value={k}>{v.icon} {k.replace(/_/g," ")}</option>)}</select>
-            <input type="number" value={newHPts} onChange={e=>setNewHPts(Math.max(1,parseInt(e.target.value)||1))} style={{...iS,width:50,textAlign:"center",color:"#ffaa00"}} title="XP per completion"/>
+            <input type="number" value={newHPts} onChange={e=>setNewHPts(Math.max(1,parseInt(e.target.value)||1))} style={{...iS,width:50,textAlign:"center",color:"#ffaa00"}} title="XP per check"/>
             <Btn color="#66ffaa" onClick={()=>{if(newHName.trim()){setHabits(p=>[...p,{id:`h_${Date.now()}`,name:newHName,stat:newHStat,points:newHPts}]);setNewHName("");}}}>+</Btn>
+            <Btn color="#888" onClick={()=>setEditingHabits(!editingHabits)}>{editingHabits?"Done":"✏️"}</Btn>
           </div>
-          <div style={{fontSize:10,color:"#666",marginTop:8}}>Each habit completion earns XP tied to its stat category.</div>
+          <div style={{fontSize:10,color:"#666",marginTop:8}}>Each habit check = XP. 🔥 = current streak. Today's column is highlighted.</div>
         </div>
       </div>}
 
@@ -469,7 +489,10 @@ export default function App(){
         <div style={cS}>{sT("🎯 2026 MILESTONES")}
           {milestones.map(m=><div key={m.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",marginBottom:6,background:m.done?"rgba(102,255,170,0.06)":"rgba(0,0,0,0.2)",borderRadius:9,cursor:"pointer"}} onClick={()=>setMilestones(p=>p.map(x=>x.id===m.id?{...x,done:!x.done}:x))}>
             <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:24,height:24,borderRadius:"50%",border:m.done?"2px solid #66ffaa":"2px solid #444",background:m.done?"#66ffaa":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#0a0a0f"}}>{m.done?"✓":""}</div><span style={{fontSize:14,textDecoration:m.done?"line-through":"none",color:m.done?"#666":"#e0e0e0"}}>{m.name}</span></div>
-            {m.done&&<span style={{color:"#66ffaa",fontSize:11}}>ACHIEVED</span>}
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              {m.done&&<span style={{color:"#66ffaa",fontSize:11}}>ACHIEVED</span>}
+              <button onClick={e=>{e.stopPropagation();setMilestones(p=>p.filter(x=>x.id!==m.id))}} style={{background:"none",border:"none",color:"#ff444466",cursor:"pointer",fontSize:14}}>×</button>
+            </div>
           </div>)}
           <div style={{display:"flex",gap:6,marginTop:14}}>
             <input value={newMile} onChange={e=>setNewMile(e.target.value)} placeholder="Add milestone..." onKeyDown={e=>{if(e.key==="Enter"&&newMile.trim()){setMilestones(p=>[...p,{id:`m_${Date.now()}`,name:newMile,done:false}]);setNewMile("");}}} style={{...iS,flex:1}}/>
